@@ -1,0 +1,5 @@
+concert_cms/__pycache__/
+env/
+**/__pycache__/
+credentials.json
+token.json
