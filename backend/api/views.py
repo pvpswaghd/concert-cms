@@ -5,7 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 from wagtail.models import Page
 
 from .models import ConcertIndexPage
-from .config import build_service, SHEET_ID, SPREADSHEET_ID
+from .config import build_service, SPREADSHEET_ID
 
 def sync_sheets() -> None:
     """

@@ -22,6 +22,7 @@ class ConcertIndexPage(Page):
     end_time = models.TimeField()
     concert_type = models.CharField(max_length=100)
     artist = models.CharField(max_length=100)
+    # TODO: Add tickets relationship, and also sold out boolean field
 
     content_panels = Page.content_panels + [
         FieldPanel('name'),
