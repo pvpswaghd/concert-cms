@@ -23,7 +23,6 @@ class ConcertIndexPage(Page):
     concert_type = models.CharField(max_length=100)
     artist = models.CharField(max_length=100)
 
-    # Panels for Wagtail admin
     content_panels = Page.content_panels + [
         FieldPanel('name'),
         FieldPanel('date'),
@@ -37,7 +36,6 @@ class ConcertIndexPage(Page):
         FieldPanel('artist'),
     ]
 
-    # API fields for Wagtail API
     api_fields = [
         APIField('name'),
         APIField('date'),
@@ -54,10 +52,10 @@ class ConcertIndexPage(Page):
 class Ticket(models.Model):
     ticket_id = models.AutoField(primary_key=True)
     concert = models.ForeignKey(ConcertIndexPage, on_delete=models.CASCADE, related_name="tickets")
-    user_name = models.CharField(max_length=100)  # Replace `user_id` for simplicity
+    user_name = models.CharField(max_length=100) 
     price = models.DecimalField(max_digits=10, decimal_places=2)
     seat = models.CharField(max_length=100)
-    status = models.CharField(max_length=100)  # e.g., "available", "sold_out"
+    status = models.CharField(max_length=100)  
     purchase_date = models.DateField()
     purchase_time = models.TimeField()
     quantity = models.IntegerField()
@@ -68,7 +66,7 @@ class Ticket(models.Model):
 class GoogleSheetUpdateMeta(models.Model):
     sheet_id = models.AutoField(primary_key=True)
     sheet_name = models.CharField(max_length=100)
-    action = models.CharField(max_length=100)  # e.g., "added", "updated", "deleted"
+    action = models.CharField(max_length=100)  
     concert = models.ForeignKey(ConcertIndexPage, on_delete=models.CASCADE, related_name="sheet_updates")
     modified_date = models.DateField()
     modified_time = models.TimeField()

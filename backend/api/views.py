@@ -1,5 +1,3 @@
-# api/views.py
-
 import json
 
 from django.http import JsonResponse
