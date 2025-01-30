@@ -2,6 +2,11 @@
 
 This is a proof-of-concept headless CMS for managing concert tickets using Wagtail, NextJS and Google Sheets API. It is a minimal example that demonstrates how to use Wagtail as a headless CMS and NextJS as a frontend.
 
+## Demo
+
+https://github.com/user-attachments/assets/09f61035-b9f7-4740-b200-ffaf00c8d92e
+
+
 ## Installation
 ```bash
 cd backend/
