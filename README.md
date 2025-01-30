@@ -40,10 +40,6 @@ There are several requirements interpreted and assumed from the project descript
 6. The CMS should be able to handle multiple concerts, and each concert should have a unique identifier.
 7. A real-time update between the CMS and the Google Sheet is required.
 
-## Design Graph
-
-The design graph for this project is as follows:
-
 ## API Endpoints
 
 To retrieve all the concerts data available, you can use the following endpoint exposed by Wagtail CMS API:
