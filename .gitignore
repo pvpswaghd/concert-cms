@@ -4,3 +4,4 @@ env/
 credentials.json
 token.json
 test_gs.py
+.DS_Store

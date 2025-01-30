@@ -227,7 +227,9 @@ The documentation for the project can be referenced in the following folders:
 
 There are several improvements that can be made to this project except working on the ticket logic:
 
+- Using Swagger 3.0 for API documentation, and schema validation. This will help in documenting the API endpoints and the request/response schema. It will also help in validating the request/response data against the schema, especially since we are opening our CMS for third-party applications.
 - Implementing authentication and authorization for the API endpoints, as currently there is no security implemented. If this is deployed to production, it might be vulnerable to attacks. A JWT token-based authentication can be implemented, or cloud-based services like AWS Cognito can be used.
 - Implementing a frontend that is more user-friendly and interactive. The current frontend is minimal and only displays the concert data in a page format. A more interactive frontend can be further designed with performance optimizations.
 - Restructure the project to use a better file structure and naming conventions. The current project structure is minimal and can be further improved for better readability and maintainability.
 - Implementing a CI/CD pipeline for the project. For CI, we could incorporate tools such as Pantsbuild, Black, and Flake8 for code quality checks within GitHub Actions. For CD, we could use tools like GitHub Actions for automated deployment. 
+- CORS headers should be closed, but opened due to local development. In production, the CORS headers should be closed to prevent unauthorized access to the API endpoints.

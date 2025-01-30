@@ -197,6 +197,7 @@ WAGTAILDOCS_EXTENSIONS = [
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # React frontend origin
+    "null",
 ]
 
 DEBUG = True
