@@ -71,3 +71,22 @@ button:hover {
 #concert-list button:hover {
     background-color: #c82333;
 }
+
+.sold-out-container {
+    display: flex;
+    align-items: center;
+    margin: 1rem 0;
+}
+
+.sold-out-label {
+    display: flex;
+    align-items: center;
+    font-size: 1rem;
+    font-weight: bold;
+    color: #333;
+}
+
+.sold-out-label input {
+    margin-right: 0.5rem;
+    transform: scale(1.2); /* Makes the checkbox larger for better aesthetics */
+}

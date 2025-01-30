@@ -24,6 +24,12 @@
             <input type="time" id="update-end-time" required>
             <input type="text" id="update-concert-type" placeholder="Concert Type" required>
             <input type="text" id="update-artist" placeholder="Artist" required>
+            <div class="sold-out-container">
+                <label for="sold-out" class="sold-out-label">
+                    <input type="checkbox" id="update-sold-out">
+                    <span>Mark as Sold Out</span>
+                </label>
+            </div>
             <button type="submit">Update Concert</button>
             <button type="button" onclick="cancelUpdate()">Cancel</button>
         </form>
@@ -43,6 +49,12 @@
             <input type="time" id="end-time" required>
             <input type="text" id="concert-type" placeholder="Concert Type" required>
             <input type="text" id="artist" placeholder="Artist" required>
+            <div class="sold-out-container">
+                <label for="sold-out" class="sold-out-label">
+                    <input type="checkbox" id="sold-out">
+                    <span>Mark as Sold Out</span>
+                </label>
+            </div>
             <button type="submit">Create Concert</button>
         </form>
     </div>

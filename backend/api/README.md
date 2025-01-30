@@ -1,3 +1,12 @@
+# API Documentation
+
+This is the documentation for the API endpoints. The API endpoints are used to interact with the Google Sheet API to sync the data between the Google Sheet and the Django application.
+
+The reason that Wagtail is used as the CMS is due to the following:
+
+- As a long-term Python developer and someone who is more fond of ORM frameworks like Spring Boot, a Django-based CMS like Wagtail is more familiar to me
+- Wagtail is a CMS that is built on top of Django, and it is easy to use and has a lot of community support. Institutions and enterprises such as M+ Museum used Wagtail as their CMS. If we think of this in long-term, Wagtail definitely provides more flexibility and scalability.
+
 ## API Endpoints Logic
 
 There are multiple files that are note documenting here, as they are representing the main logic of the API endpoints.

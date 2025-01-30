@@ -22,7 +22,7 @@ class ConcertIndexPage(Page):
     end_time = models.TimeField()
     concert_type = models.CharField(max_length=100)
     artist = models.CharField(max_length=100)
-    # TODO: Add tickets relationship, and also sold out boolean field
+    sold_out = models.BooleanField(default=False)
 
     content_panels = Page.content_panels + [
         FieldPanel('name'),
@@ -35,6 +35,7 @@ class ConcertIndexPage(Page):
         FieldPanel('end_time'),
         FieldPanel('concert_type'),
         FieldPanel('artist'),
+        FieldPanel('sold_out'),
     ]
 
     api_fields = [
@@ -48,29 +49,52 @@ class ConcertIndexPage(Page):
         APIField('end_time'),
         APIField('concert_type'),
         APIField('artist'),
+        APIField('sold_out'),
     ]
+
+class TicketVariant(models.Model):
+    concert = models.ForeignKey(
+        ConcertIndexPage,
+        on_delete=models.CASCADE,
+        related_name='ticket_variants'
+    )
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    seat_section = models.CharField(max_length=50, blank=True, null=True)
+    is_available = models.BooleanField(default=True)
+    total_quantity = models.PositiveIntegerField()
+    remaining_quantity = models.PositiveIntegerField()
 
 class Ticket(models.Model):
     ticket_id = models.AutoField(primary_key=True)
-    concert = models.ForeignKey(ConcertIndexPage, on_delete=models.CASCADE, related_name="tickets")
-    user_name = models.CharField(max_length=100) 
+    variant = models.ForeignKey(
+        TicketVariant,
+        on_delete=models.CASCADE,
+        related_name="tickets"
+    )
+    user_name = models.CharField(max_length=100)
     price = models.DecimalField(max_digits=10, decimal_places=2)
-    seat = models.CharField(max_length=100)
-    status = models.CharField(max_length=100)  
-    purchase_date = models.DateField()
-    purchase_time = models.TimeField()
-    quantity = models.IntegerField()
+    seat = models.CharField(max_length=100, blank=True, null=True) 
+    status = models.CharField(max_length=100, default="Active")
+    purchase_date = models.DateField(auto_now_add=True)
+    purchase_time = models.TimeField(auto_now_add=True)
+    quantity = models.PositiveIntegerField(default=1)
 
-    def __str__(self):
-        return f"Ticket for {self.concert.name} - Seat {self.seat}"
+class UpdateMeta(models.Model):
+    ACTION_CHOICES = [
+        ("CREATE", "Create"),
+        ("UPDATE", "Update"),
+        ("DELETE", "Delete"),
+    ]
 
-class GoogleSheetUpdateMeta(models.Model):
     sheet_id = models.AutoField(primary_key=True)
     sheet_name = models.CharField(max_length=100)
-    action = models.CharField(max_length=100)  
-    concert = models.ForeignKey(ConcertIndexPage, on_delete=models.CASCADE, related_name="sheet_updates")
-    modified_date = models.DateField()
-    modified_time = models.TimeField()
-
-    def __str__(self):
-        return f"GoogleSheetUpdate for {self.concert.name} ({self.action})"
+    action = models.CharField(max_length=100, choices=ACTION_CHOICES)
+    concert = models.ForeignKey(
+        ConcertIndexPage,
+        on_delete=models.CASCADE,
+        related_name="sheet_updates"
+    )
+    modified_date = models.DateField(auto_now=True)
+    modified_time = models.TimeField(auto_now=True)

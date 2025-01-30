@@ -221,7 +221,9 @@ Note that there are no extra payload needed for this request. Here is a sample r
 
 The documentation for the project can be referenced in the following folders:
 
+- `crud-js/README.md`
 - `backend/api/README.md`
+- `frontend/README.md`
 
 ## Further Improvements
 

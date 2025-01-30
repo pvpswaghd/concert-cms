@@ -17,6 +17,8 @@ interface ConcertItem {
     date: string;
     artist: string;
     location: string;
+    sold_out: boolean;
+    description: string;
 }
 
 function ConcertList() {
@@ -25,7 +27,7 @@ function ConcertList() {
     useEffect(() => {
         async function fetchConcerts() {
             const response = await fetch(
-                "http://127.0.0.1:8000/api/v2/pages/?type=api.ConcertIndexPage&fields=_,id,title,artist,date,location",
+                "http://127.0.0.1:8000/api/v2/pages/?type=api.ConcertIndexPage&fields=_,id,title,artist,date,location,sold_out,description",
                 {
                     headers: { Accept: "application/json" },
                 }
@@ -50,7 +52,13 @@ function ConcertList() {
 
 function ConcertCard({ concert }: { concert: ConcertItem }) {
     return (
-        <Card className="w-full max-w-sm transition-transform duration-300 ease-in-out hover:scale-105 hover:shadow-lg">
+        <Card
+            className={`w-full max-w-sm transition-transform duration-300 ease-in-out ${
+                concert.sold_out
+                    ? "opacity-50 cursor-not-allowed"
+                    : "hover:scale-105 hover:shadow-lg"
+            }`}
+        >
             <CardHeader>
                 <CardTitle className="text-xl font-bold">
                     {concert.title}
@@ -60,6 +68,7 @@ function ConcertCard({ concert }: { concert: ConcertItem }) {
                 </CardDescription>
             </CardHeader>
             <CardContent>
+                <p className="text-md italic">{concert.description}</p>
                 <p className="text-sm text-muted-foreground">
                     <strong>Date:</strong> {concert.date}
                 </p>

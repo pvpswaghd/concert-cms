@@ -15,7 +15,7 @@ def sync_sheets() -> None:
     service = build_service()
     service.spreadsheets().values().clear(
         spreadsheetId=SPREADSHEET_ID,
-        range="Table!A2:K"
+        range="Table!A2:L"
     ).execute()
     ConcertIndexPage.objects.all()
     concert_data = []
@@ -32,6 +32,7 @@ def sync_sheets() -> None:
             concert.end_time.strftime('%H:%M:%S') if concert.end_time else None,  
             concert.concert_type,  
             concert.artist,  
+            concert.sold_out,
         ])
     
     body = { "values": concert_data }
@@ -56,7 +57,8 @@ def create_concert(request) -> JsonResponse:
         "start_time": "19:00",
         "end_time": "22:00",
         "concert_type": "Classical",
-        "artist": "John Doe"
+        "artist": "John Doe",
+        "sold_out": false
     }
     """
     if request.method == "POST":
@@ -74,6 +76,7 @@ def create_concert(request) -> JsonResponse:
                 end_time=data.get("end_time", None),
                 concert_type=data.get("concert_type", ""),
                 artist=data.get("artist", ""),
+                sold_out=data.get("sold_out", False),
             )
             parent_page.add_child(instance=concert_page)
             concert_page.save_revision().publish()
@@ -162,6 +165,8 @@ def update_concert(request, concert_id: int) -> JsonResponse:
         concert_page.concert_type = data["concert_type"]
     if "artist" in data:
         concert_page.artist = data["artist"]
+    if "sold_out" in data:
+        concert_page.sold_out = data["sold_out"]
 
     # Save and publish
     concert_page.save_revision().publish()
@@ -181,6 +186,7 @@ def update_concert(request, concert_id: int) -> JsonResponse:
         "concert_type": concert_page.concert_type,
         "artist": concert_page.artist,
         "last_updated": str(concert_page.latest_revision_created_at) if concert_page.latest_revision_created_at else None,
+        "sold_out": concert_page.sold_out,
     }
 
     return JsonResponse({
