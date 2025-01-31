@@ -1,196 +1,466 @@
 import json
-
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.core.exceptions import ValidationError
+from django.shortcuts import get_object_or_404
 from wagtail.models import Page
+from .models import VenuePage, ConcertPage, TicketType, SoldSeat, SeatZone, Seat
+from django.db.models.deletion import ProtectedError
+from django.utils.text import slugify
 
-from .models import ConcertIndexPage
-from .config import build_service, SPREADSHEET_ID
+# Helper functions
+def add_hateoas_links(obj, links):
+    """Add HATEOAS links to API responses"""
+    return {**obj, '_links': links}
 
-def sync_sheets() -> None:
-    """
-    Syncs the ConcertIndexPage data with Google Sheets.
-    """
-    print("hi")
-    service = build_service()
-    service.spreadsheets().values().clear(
-        spreadsheetId=SPREADSHEET_ID,
-        range="Table!A2:L"
-    ).execute()
-    ConcertIndexPage.objects.all()
-    concert_data = []
-    for concert in ConcertIndexPage.objects.all():
-        concert_data.append([
-            concert.id,  
-            concert.date.strftime('%Y-%m-%d') if concert.date else None,  # Convert date to string format
-            concert.location,  
-            concert.title,  
-            float(concert.price) if concert.price else None,  
-            concert.description, 
-            concert.image.file.url if concert.image else "No Image",  
-            concert.start_time.strftime('%H:%M:%S') if concert.start_time else None,  
-            concert.end_time.strftime('%H:%M:%S') if concert.end_time else None,  
-            concert.concert_type,  
-            concert.artist,  
-            concert.sold_out,
-        ])
+def validate_seat_zone(zone_data, index, admission_mode):
+    """Enhanced validation considering venue admission mode"""
+    try:
+        validation_rules = {
+            'assigned': lambda: {
+                'row': _validate_row(zone_data, index),
+                'seats': _validate_seats(zone_data, index)
+            },
+            'general': lambda: {
+                'ga_params': _validate_ga_fields(zone_data, index)
+            },
+            'mixed': lambda: {
+                'type': _validate_zone_type(zone_data, index),
+                **(_validate_row(zone_data, index) if zone_data.get('type') == 'assigned' 
+                   else _validate_ga_fields(zone_data, index))
+            }
+        }
+        
+        # Validate based on admission mode
+        if admission_mode not in validation_rules:
+            raise ValidationError(f"Invalid admission mode: {admission_mode}")
+            
+        validation_fn = validation_rules[admission_mode]
+        validation_result = validation_fn()
+        
+        return {
+            'row_start': validation_result.get('row', {}).get('start'),
+            'row_end': validation_result.get('row', {}).get('end'),
+            'seat_start': validation_result.get('seats', {}).get('start'),
+            'seat_end': validation_result.get('seats', {}).get('end'),
+            'ga_capacity': validation_result.get('ga_params', {}).get('capacity')
+        }
+        
+    except KeyError as e:
+        raise ValidationError(f"Missing required field {e} in zone {index+1}")
+    except ValueError:
+        raise ValidationError(f"Invalid number format in zone {index+1}")
+
+# Helper validators
+def _validate_row(zone_data, index):
+    """Validate row format for assigned seating"""
+    row_start = str(zone_data['row_start']).upper()
+    row_end = str(zone_data['row_end']).upper()
     
-    body = { "values": concert_data }
-    service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range="Table!A2",
-        valueInputOption="RAW",
-        body=body
-    ).execute()
+    if len(row_start) != 1 or not row_start.isalpha():
+        raise ValidationError(f"Invalid row_start in zone {index+1}")
+    if len(row_end) != 1 or not row_end.isalpha():
+        raise ValidationError(f"Invalid row_end in zone {index+1}")
+    
+    return {'start': row_start, 'end': row_end}
 
+def _validate_seats(zone_data, index):
+    """Validate seat range for assigned seating"""
+    seat_start = int(zone_data['seat_start'])
+    seat_end = int(zone_data['seat_end'])
+    
+    if seat_start < 1 or seat_end < seat_start:
+        raise ValidationError(f"Invalid seat range in zone {index+1}")
+    
+    return {'start': seat_start, 'end': seat_end}
+
+def _validate_ga_fields(zone_data, index):
+    """Validate general admission parameters"""
+    if 'ga_capacity' not in zone_data:
+        raise ValidationError(f"GA zones require capacity in zone {index+1}")
+    if int(zone_data.get('ga_capacity', 0)) <= 0:
+        raise ValidationError(f"Invalid GA capacity in zone {index+1}")
+    
+    return {'capacity': zone_data['ga_capacity']}
+
+def _validate_zone_type(zone_data, index):
+    """Validate zone type for mixed venues"""
+    zone_type = zone_data.get('type')
+    if zone_type not in ['assigned', 'general']:
+        raise ValidationError(f"Invalid zone type in zone {index+1}")
+    return zone_type
+
+# Venue Endpoints
 @csrf_exempt
-def create_concert(request) -> JsonResponse:
-    """
-    Example JSON payload to POST:
-    {
-        "title": "Awesome Concert",
-        "name": "An Evening to Remember",
-        "date": "2025-01-01",
-        "location": "Carnegie Hall",
-        "price": "49.99",
-        "description": "<p>This is a <strong>great</strong> concert</p>",
-        "start_time": "19:00",
-        "end_time": "22:00",
-        "concert_type": "Classical",
-        "artist": "John Doe",
-        "sold_out": false
-    }
-    """
-    if request.method == "POST":
+def venue_list_create(request):
+    print("hi")
+    if request.method == 'POST':
         try:
             data = json.loads(request.body)
-            parent_page = Page.objects.get(slug="home")
-            concert_page = ConcertIndexPage(
-                title=data.get("title", ""),  # required by Wagtail
-                name=data.get("name", ""),
-                date=data.get("date", None),
-                location=data.get("location", ""),
-                price=data.get("price", 0),
-                description=data.get("description", ""),
-                start_time=data.get("start_time", None),
-                end_time=data.get("end_time", None),
-                concert_type=data.get("concert_type", ""),
-                artist=data.get("artist", ""),
-                sold_out=data.get("sold_out", False),
+            parent = Page.objects.get(slug='home')
+            admission_mode = data.get('admission_mode', 'assigned')
+            print(data)
+            # Set BOTH title (Page) and name (VenuePage) from data['name']
+            venue = VenuePage(
+                title=data['name'],    # Wagtail's Page.title
+                name=data['name'],     # VenuePage.name (your custom field)
+                slug=data.get('slug') or slugify(data['name']),
+                address=data['address'],
+                admission_mode=admission_mode,
+                capacity=data['capacity'],
             )
-            parent_page.add_child(instance=concert_page)
-            concert_page.save_revision().publish()
-            sync_sheets()
-            return JsonResponse({
-                "status": "success",
-                "page_id": concert_page.id,
-                "slug": concert_page.slug,
-                "message": "Concert page created and published successfully!"
-            }, status=201)
+            print("Hi")
+            parent.add_child(instance=venue)
+            venue.save_revision().publish()
+
+            print("Bye")
+            # Now create seat zones
+            seat_zones = []
+            for idx, zone_data in enumerate(data.get('seat_zones', [])):
+                validated = validate_seat_zone(zone_data, idx, admission_mode)
+                
+                zone = SeatZone(
+                    venue=venue,  # Now venue has ID
+                    name=zone_data['name'],
+                    slug=zone_data.get('slug') or slugify(zone_data['name']),
+                    row_start=validated.get('row_start'),
+                    row_end=validated.get('row_end'),
+                    seat_start=validated.get('seat_start'),
+                    seat_end=validated.get('seat_end'),
+                    ga_capacity=validated.get('ga_capacity')
+                )
+                seat_zones.append(zone)
+            
+            # Bulk create after venue exists in DB
+            SeatZone.objects.bulk_create(seat_zones)
+
+            return JsonResponse(add_hateoas_links(
+                {
+                    'slug': venue.slug,
+                    'message': f'Venue {venue.title} created',
+                    'zones': [z.slug for z in seat_zones]
+                },
+                {
+                    'self': f'/api/venues/{venue.slug}/',
+                    'concerts': f'/api/venues/{venue.slug}/concerts/',
+                    'zones': f'/api/venues/{venue.slug}/zones/'
+                }
+            ), status=201)
+            
         except Exception as e:
+            print("oops")
+            return JsonResponse({'error': str(e)}, status=400)
+    
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+@csrf_exempt
+def venue_detail(request, venue_slug):
+    """Handle venue CRUD operations"""
+    venue = get_object_or_404(VenuePage, slug=venue_slug)
+    
+    if request.method == 'GET':
+        data = {
+            'slug': venue.slug,
+            'title': venue.title,
+            'capacity': venue.capacity,
+            'admission_mode': venue.admission_mode,
+            'zones': [{
+                'slug': z.slug,
+                'name': z.name,
+                'total_seats': z.total_seats
+            } for z in venue.seat_zones.all()]
+        }
+        return JsonResponse(add_hateoas_links(data, {
+            'concerts': f'/api/venues/{venue.slug}/concerts/',
+            'zones': f'/api/venues/{venue.slug}/zones/'
+        }))
+    
+    elif request.method in ['PUT', 'PATCH']:
+        try:
+            data = json.loads(request.body)
+            venue.title = data.get('name', venue.title)
+            venue.address = data.get('address', venue.address)
+            venue.capacity = data.get('capacity', venue.capacity)
+            venue.admission_mode = data.get('admission_mode', venue.admission_mode)
+            
+            if 'seat_zones' in data:
+                venue.seat_zones.all().delete()
+                for zone_data in data['seat_zones']:
+                    validated = validate_seat_zone(zone_data, 0)
+                    venue.seat_zones.create(
+                        slug=zone_data.get('slug') or slugify(zone_data['name']),
+                        **validated
+                    )
+            
+            venue.save_revision().publish()
+            return JsonResponse({'message': 'Venue updated successfully'})
+        
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    
+    elif request.method == 'DELETE':
+        try:
+            venue.delete()
+            return JsonResponse({'message': f'Venue {venue.title} deleted'})
+        except ProtectedError:
             return JsonResponse({
-                "status": "error",
-                "message": str(e)
-            }, status=400)
+                'error': 'Cannot delete venue with existing concerts',
+                'solution': 'Delete all associated concerts first'
+            }, status=409)
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
 
-    # If not a POST request, return method not allowed.
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+# Concert Endpoints
+@csrf_exempt
+def concert_list_create(request, venue_slug):
+    """Handle concert creation and listing under a venue"""
+    venue = get_object_or_404(VenuePage, slug=venue_slug)
+    
+    if request.method == 'GET':
+        concerts = venue.concerts.live().values('slug', 'title', 'date')
+        return JsonResponse(list(concerts), safe=False)
+        
+    elif request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            concert = ConcertPage(
+                title=data['name'],
+                slug=data.get('slug') or slugify(data['name']),
+                date=data['date'],
+                venue=venue,
+                artist=data['artist'],
+                start_time=data['start_time'],
+                end_time=data.get('end_time'),
+                description=data.get('description'),
+            )
+            
+            # Create ticket types
+            ticket_types = []
+            for tt_data in data.get('ticket_types', []):
+                tt_type = tt_data['type']
+                if tt_type == 'assigned':
+                    zone = get_object_or_404(SeatZone, 
+                        slug=tt_data['seat_zone_slug'],
+                        venue=venue
+                    )
+                    ticket_types.append(TicketType(
+                        concert=concert,
+                        type=tt_type,
+                        seat_zone=zone,
+                        price=tt_data['price'],
+                        slug=tt_data.get('slug') or slugify(f"{concert.slug}-{zone.slug}")
+                    ))
+                elif tt_type == 'general':
+                    ticket_types.append(TicketType(
+                        concert=concert,
+                        type=tt_type,
+                        ga_capacity=tt_data['ga_capacity'],
+                        price=tt_data['price'],
+                        slug=tt_data.get('slug') or slugify(f"{concert.slug}-general")
+                    ))
+                else:
+                    raise ValidationError(f"Invalid ticket type: {tt_type}")
+            
+            # Save everything
+            venue.add_child(instance=concert)
+            TicketType.objects.bulk_create(ticket_types)
+            concert.save_revision().publish()
+
+            return JsonResponse(add_hateoas_links(
+                {
+                    'slug': concert.slug,
+                    'message': f'Concert {concert.title} created',
+                    'ticket_types': [tt.slug for tt in ticket_types]
+                },
+                {
+                    'self': f'/api/venues/{venue.slug}/concerts/{concert.slug}/',
+                    'availability': f'/api/venues/{venue.slug}/concerts/{concert.slug}/availability/'
+                }
+            ), status=201)
+            
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
 
 @csrf_exempt
-def remove_concert(request, concert_id: int) -> JsonResponse:
-    """
-    DELETE request to remove a single ConcertIndexPage by ID.
-    """
-    try:
-        concert_page = ConcertIndexPage.objects.get(id=concert_id)
-    except ConcertIndexPage.DoesNotExist:
-        return JsonResponse({"error": "Concert not found"}, status=404)
+def concert_detail(request, venue_slug, concert_slug):
+    """Handle concert CRUD operations"""
+    concert = get_object_or_404(ConcertPage, slug=concert_slug, venue__slug=venue_slug)
+    
+    if request.method in ['PUT', 'PATCH']:
+        try:
+            data = json.loads(request.body)
+            concert.title = data.get('name', concert.title)
+            concert.date = data.get('date', concert.date)
+            concert.artist = data.get('artist', concert.artist)
+            concert.start_time = data.get('start_time', concert.start_time)
+            concert.end_time = data.get('end_time', concert.end_time)
+            concert.description = data.get('description', concert.description)
+            
+            if 'venue_slug' in data and concert.venue.slug != data['venue_slug']:
+                new_venue = get_object_or_404(VenuePage, slug=data['venue_slug'])
+                concert.move(new_venue, pos='last-child')
+            
+            concert.save_revision().publish()
+            return JsonResponse({'message': 'Concert updated successfully'})
+        
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    
+    elif request.method == 'DELETE':
+        try:
+            concert.delete()
+            return JsonResponse({'message': f'Concert {concert.title} deleted'})
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
 
-    # Delete the page
-    concert_page.delete()
-    sync_sheets()
-
-    return JsonResponse({
-        "status": "success",
-        "message": f"Concert {concert_id} removed successfully!"
-    }, status=200)
+# Seat Operations
+@csrf_exempt
+def reserve_seats(request, venue_slug, concert_slug):
+    """Reserve seats for a concert"""
+    concert = get_object_or_404(ConcertPage, 
+        slug=concert_slug, 
+        venue__slug=venue_slug
+    )
+    
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            ticket_type = get_object_or_404(
+                TicketType, 
+                slug=data['ticket_type_slug'],
+                concert=concert
+            )
+            
+            if ticket_type.type != 'assigned':
+                return JsonResponse({'error': 'Ticket type does not support seat selection'}, 400)
+                
+            seats = list(Seat.objects.filter(
+                zone__venue=concert.venue,
+                identifier__in=data['seat_ids']
+            ).distinct())
+            
+            if len(seats) != len(data['seat_ids']):
+                return JsonResponse({'error': 'Invalid seat selection'}, 400)
+                
+            if SoldSeat.objects.filter(concert=concert, seat__in=seats).exists():
+                return JsonResponse({'error': 'Some seats already taken'}, 409)
+            
+            SoldSeat.objects.bulk_create([
+                SoldSeat(concert=concert, seat=seat) for seat in seats
+            ])
+            
+            return JsonResponse({
+                'reserved_seats': data['seat_ids'],
+                'remaining': ticket_type.remaining,
+                'is_sold_out': ticket_type.is_sold_out
+            })
+            
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
 
 @csrf_exempt
-def update_concert(request, concert_id: int) -> JsonResponse:
-    """
-    PUT or PATCH request to update a single ConcertIndexPage by ID.
-    Example request payload:
-    {
-      "title": "Updated Title",
-      "name": "A Brand New Name",
-      "date": "2025-02-02",
-      "price": "59.99",
-      ...
-    }
-    """
-    if request.method not in ["PUT", "PATCH"]:
-        return JsonResponse({"error": "Method not allowed"}, status=405)
+def get_concert_availability(request, venue_slug, concert_slug):
+    """Get concert ticket availability"""
+    concert = get_object_or_404(ConcertPage, 
+        slug=concert_slug, 
+        venue__slug=venue_slug
+    )
+    
+    availability = []
+    for tt in concert.ticket_types.all():
+        availability.append({
+            'slug': tt.slug,
+            'type': tt.type,
+            'price': str(tt.price),
+            'remaining': tt.remaining,
+            'is_sold_out': tt.is_sold_out,
+            'zone': tt.seat_zone.slug if tt.seat_zone else None
+        })
+    return JsonResponse({'ticket_types': availability})
 
-    try:
-        concert_page = ConcertIndexPage.objects.get(id=concert_id)
-    except ConcertIndexPage.DoesNotExist:
-        return JsonResponse({"error": "Concert not found"}, status=404)
-
-    try:
-        data = json.loads(request.body)
-    except Exception as e:
-        return JsonResponse({"error": "Invalid JSON payload", "details": str(e)}, status=400)
-
-    if "date" in data and not data["date"]:
-        return JsonResponse({"error": "date cannot be empty"}, status=400)
-
-    # For demonstration, we handle fields only if they appear in data
-    if "title" in data:
-        concert_page.title = data["title"]
-    if "name" in data:
-        concert_page.name = data["name"]
-    if "date" in data:
-        concert_page.date = data["date"]
-    if "location" in data:
-        concert_page.location = data["location"]
-    if "price" in data:
-        concert_page.price = data["price"]
-    if "description" in data:
-        concert_page.description = data["description"]
-    if "start_time" in data:
-        concert_page.start_time = data["start_time"]
-    if "end_time" in data:
-        concert_page.end_time = data["end_time"]
-    if "concert_type" in data:
-        concert_page.concert_type = data["concert_type"]
-    if "artist" in data:
-        concert_page.artist = data["artist"]
-    if "sold_out" in data:
-        concert_page.sold_out = data["sold_out"]
-
-    # Save and publish
-    concert_page.save_revision().publish()
-    sync_sheets()
-
-    # Serialize the concert page metadata
-    concert_metadata = {
-        "id": concert_page.id,
-        "title": concert_page.title,
-        "name": concert_page.name,
-        "date": str(concert_page.date),
-        "location": concert_page.location,
-        "price": str(concert_page.price),
-        "description": concert_page.description,
-        "start_time": str(concert_page.start_time) if concert_page.start_time else None,
-        "end_time": str(concert_page.end_time) if concert_page.end_time else None,
-        "concert_type": concert_page.concert_type,
-        "artist": concert_page.artist,
-        "last_updated": str(concert_page.latest_revision_created_at) if concert_page.latest_revision_created_at else None,
-        "sold_out": concert_page.sold_out,
-    }
-
-    return JsonResponse({
-        "status": "success",
-        "message": f"Concert {concert_id} updated successfully!",
-        "concert_metadata": concert_metadata,
-    }, status=200)
+# Ticket Type Operations
+@csrf_exempt
+def ticket_type_detail(request, ticket_type_slug):
+    """Handle ticket type updates"""
+    tt = get_object_or_404(TicketType, slug=ticket_type_slug)
+    
+    if request.method in ['PUT', 'PATCH']:
+        try:
+            data = json.loads(request.body)
+            
+            if 'price' in data:
+                tt.price = data['price']
+            
+            if tt.type == 'general' and 'ga_capacity' in data:
+                if data['ga_capacity'] < tt.sold:
+                    raise ValidationError('Capacity cannot be less than sold tickets')
+                tt.ga_capacity = data['ga_capacity']
+            
+            tt.save()
+            return JsonResponse({
+                'remaining': tt.remaining,
+                'is_sold_out': tt.is_sold_out
+            })
+        
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    
+@csrf_exempt
+def zone_list(request, venue_slug):
+    """List and manage seat zones for a venue"""
+    venue = get_object_or_404(VenuePage, slug=venue_slug)
+    
+    if request.method == 'GET':
+        zones = []
+        for zone in venue.seat_zones.all():
+            zones.append({
+                'slug': zone.slug,
+                'name': zone.name,
+                'row_start': zone.row_start,
+                'row_end': zone.row_end,
+                'seat_start': zone.seat_start,
+                'seat_end': zone.seat_end,
+                'total_seats': zone.total_seats,
+                '_links': {
+                    'self': f'/api/venues/{venue.slug}/zones/{zone.slug}/',
+                    'seats': f'/api/venues/{venue.slug}/zones/{zone.slug}/seats/'
+                }
+            })
+        return JsonResponse(zones, safe=False)
+    
+    elif request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            validated = validate_seat_zone(data, 0)  # index 0 for single zone
+            zone = SeatZone(
+                venue=venue,
+                slug=data.get('slug') or slugify(data['name']),
+                name=data['name'],
+                **validated
+            )
+            zone.save()
+            
+            return JsonResponse(add_hateoas_links(
+                {
+                    'slug': zone.slug,
+                    'message': 'Zone created',
+                    'total_seats': zone.total_seats
+                },
+                {
+                    'self': f'/api/venues/{venue.slug}/zones/{zone.slug}/',
+                    'seats': f'/api/venues/{venue.slug}/zones/{zone.slug}/seats/'
+                }
+            ), status=201)
+            
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+    
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
