@@ -19,4 +19,6 @@ urlpatterns = [
     
     # Ticket types
     path("ticket-types/<slug:ticket_type_slug>/", views.ticket_type_detail, name="ticket_type_detail"),
+    path("venues/<slug:venue_slug>/zones/<slug:zone_slug>/", views.zone_detail, name="zone_detail"),
+    path("venues/<slug:venue_slug>/zones/<slug:zone_slug>/seats/", views.zone_seats, name="zone_seats"),
 ]

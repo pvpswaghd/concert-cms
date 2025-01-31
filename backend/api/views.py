@@ -16,36 +16,56 @@ def add_hateoas_links(obj, links):
 def validate_seat_zone(zone_data, index, admission_mode):
     """Enhanced validation considering venue admission mode"""
     try:
-        validation_rules = {
-            'assigned': lambda: {
-                'row': _validate_row(zone_data, index),
-                'seats': _validate_seats(zone_data, index)
-            },
-            'general': lambda: {
-                'ga_params': _validate_ga_fields(zone_data, index)
-            },
-            'mixed': lambda: {
-                'type': _validate_zone_type(zone_data, index),
-                **(_validate_row(zone_data, index) if zone_data.get('type') == 'assigned' 
-                   else _validate_ga_fields(zone_data, index))
-            }
+        validated_data = {
+            'row_start': None,
+            'row_end': None,
+            'seat_start': None,
+            'seat_end': None,
+            'ga_capacity': None
         }
-        
-        # Validate based on admission mode
-        if admission_mode not in validation_rules:
-            raise ValidationError(f"Invalid admission mode: {admission_mode}")
+
+        if admission_mode == 'mixed':
+            zone_type = zone_data.get('type')
+            if not zone_type:
+                raise ValidationError(f"Missing 'type' in zone {index+1} for mixed venue")
             
-        validation_fn = validation_rules[admission_mode]
-        validation_result = validation_fn()
-        
-        return {
-            'row_start': validation_result.get('row', {}).get('start'),
-            'row_end': validation_result.get('row', {}).get('end'),
-            'seat_start': validation_result.get('seats', {}).get('start'),
-            'seat_end': validation_result.get('seats', {}).get('end'),
-            'ga_capacity': validation_result.get('ga_params', {}).get('capacity')
-        }
-        
+            if zone_type == 'assigned':
+                # Validate assigned seating
+                row_validation = _validate_row(zone_data, index)
+                seats_validation = _validate_seats(zone_data, index)
+                validated_data.update({
+                    'row_start': row_validation['start'],
+                    'row_end': row_validation['end'],
+                    'seat_start': seats_validation['start'],
+                    'seat_end': seats_validation['end']
+                })
+            elif zone_type == 'general':
+                # Validate general admission
+                ga_validation = _validate_ga_fields(zone_data, index)
+                validated_data['ga_capacity'] = ga_validation['capacity']
+            else:
+                raise ValidationError(f"Invalid zone type '{zone_type}' in zone {index+1}")
+
+        elif admission_mode == 'assigned':
+            # Validate assigned seating
+            row_validation = _validate_row(zone_data, index)
+            seats_validation = _validate_seats(zone_data, index)
+            validated_data.update({
+                'row_start': row_validation['start'],
+                'row_end': row_validation['end'],
+                'seat_start': seats_validation['start'],
+                'seat_end': seats_validation['end']
+            })
+
+        elif admission_mode == 'general':
+            # Validate general admission
+            ga_validation = _validate_ga_fields(zone_data, index)
+            validated_data['ga_capacity'] = ga_validation['capacity']
+        else:
+            raise ValidationError(f"Invalid admission mode: {admission_mode}")
+        print(validated_data)
+        return validated_data
+
     except KeyError as e:
         raise ValidationError(f"Missing required field {e} in zone {index+1}")
     except ValueError:
@@ -94,7 +114,10 @@ def _validate_zone_type(zone_data, index):
 @csrf_exempt
 def venue_list_create(request):
     print("hi")
-    if request.method == 'POST':
+    if request.method == 'GET':
+        venues = VenuePage.objects.live().values('slug', 'name', 'address', 'capacity', 'admission_mode')
+        return JsonResponse(list(venues), safe=False)
+    elif request.method == 'POST':
         try:
             data = json.loads(request.body)
             parent = Page.objects.get(slug='home')
@@ -127,7 +150,7 @@ def venue_list_create(request):
                     row_end=validated.get('row_end'),
                     seat_start=validated.get('seat_start'),
                     seat_end=validated.get('seat_end'),
-                    ga_capacity=validated.get('ga_capacity')
+                    capacity=validated.get('ga_capacity')
                 )
                 seat_zones.append(zone)
             
@@ -160,8 +183,10 @@ def venue_detail(request, venue_slug):
     
     if request.method == 'GET':
         data = {
+            'address': venue.address,
             'slug': venue.slug,
             'title': venue.title,
+            'name': venue.name,
             'capacity': venue.capacity,
             'admission_mode': venue.admission_mode,
             'zones': [{
@@ -219,7 +244,7 @@ def concert_list_create(request, venue_slug):
     venue = get_object_or_404(VenuePage, slug=venue_slug)
     
     if request.method == 'GET':
-        concerts = venue.concerts.live().values('slug', 'title', 'date')
+        concerts = venue.concerts.live().values('slug', 'title', 'date', 'artist')
         return JsonResponse(list(concerts), safe=False)
         
     elif request.method == 'POST':
@@ -289,8 +314,45 @@ def concert_list_create(request, venue_slug):
 def concert_detail(request, venue_slug, concert_slug):
     """Handle concert CRUD operations"""
     concert = get_object_or_404(ConcertPage, slug=concert_slug, venue__slug=venue_slug)
+
+    if request.method == 'GET':
+        try:
+            ticket_types = []
+            for tt in concert.ticket_types.all():
+                ticket_type_data = {
+                    'slug': tt.slug,
+                    'type': tt.type,
+                    'price': str(tt.price),
+                    'remaining': tt.remaining,
+                    'is_sold_out': tt.is_sold_out
+                }
+                if tt.type == 'assigned':
+                    ticket_type_data['seat_zone'] = tt.seat_zone.slug if tt.seat_zone else None
+                else:
+                    ticket_type_data['ga_capacity'] = tt.ga_capacity
+                ticket_types.append(ticket_type_data)
+
+            print(ticket_types)
+
+            return JsonResponse({
+                'slug': concert.slug,
+                'name': concert.title,
+                'date': concert.date.isoformat(),
+                'artist': concert.artist,
+                'start_time': concert.start_time.strftime('%H:%M'),
+                'end_time': concert.end_time.strftime('%H:%M') if concert.end_time else None,
+                'description': concert.description,
+                'genre': concert.genre,
+                'ticket_types': ticket_types,
+                '_links': {
+                    'image': concert.image.file.url if concert.image else None
+                }
+            })
+            
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
     
-    if request.method in ['PUT', 'PATCH']:
+    elif request.method in ['PUT', 'PATCH']:
         try:
             data = json.loads(request.body)
             concert.title = data.get('name', concert.title)
@@ -464,3 +526,33 @@ def zone_list(request, venue_slug):
             return JsonResponse({'error': str(e)}, status=400)
     
     return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+@csrf_exempt
+def zone_detail(request, venue_slug, zone_slug):
+    """Get/modify a specific zone in a venue"""
+    zone = get_object_or_404(SeatZone, slug=zone_slug, venue__slug=venue_slug)
+    
+    if request.method == 'GET':
+        data = {
+            'slug': zone.slug,
+            'name': zone.name,
+            'row_start': zone.row_start,
+            'row_end': zone.row_end,
+            'seat_start': zone.seat_start,
+            'seat_end': zone.seat_end,
+            'total_seats': zone.total_seats,
+            '_links': {
+                'seats': f'/api/venues/{venue_slug}/zones/{zone_slug}/seats/'
+            }
+        }
+        return JsonResponse(data)
+    
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+@csrf_exempt
+def zone_seats(request, venue_slug, zone_slug):
+    """List seats in a specific zone"""
+    seats = Seat.objects.filter(zone__slug=zone_slug, zone__venue__slug=venue_slug)
+    return JsonResponse({
+        'seats': [seat.identifier for seat in seats]
+    })

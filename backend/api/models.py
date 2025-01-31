@@ -74,19 +74,22 @@ class SeatZone(Orderable):
         self.generate_seats()
 
     def generate_seats(self):
-        Seat.objects.filter(zone=self).delete()
-        for row_code in range(ord(self.row_start), ord(self.row_end) + 1):
-            row = chr(row_code)
-            for seat_num in range(self.seat_start, self.seat_end + 1):
-                Seat.objects.create(
-                    zone=self,
-                    row=row,
-                    number=seat_num,
-                    identifier=f"{row}{seat_num}"
-                )
+        # Only generate seats if this is an assigned zone
+        if self.row_start and self.row_end and self.seat_start and self.seat_end:
+            Seat.objects.filter(zone=self).delete()
+            for row_code in range(ord(self.row_start), ord(self.row_end) + 1):
+                row = chr(row_code)
+                for seat_num in range(self.seat_start, self.seat_end + 1):
+                    Seat.objects.create(
+                        zone=self,
+                        row=row,
+                        number=seat_num,
+                        identifier=f"{row}{seat_num}"
+                    )
 
     @property
     def total_seats(self):
+        print(self.name)
         if self.capacity:
             return self.capacity
         rows = ord(self.row_end) - ord(self.row_start) + 1
