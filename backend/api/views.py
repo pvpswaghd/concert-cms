@@ -7,6 +7,128 @@ from wagtail.models import Page
 from .models import VenuePage, ConcertPage, TicketType, SoldSeat, SeatZone, Seat
 from django.db.models.deletion import ProtectedError
 from django.utils.text import slugify
+from .config import build_service, SPREADSHEET_ID
+from django.db.models import Case, When, Value, F, CharField, IntegerField
+import json
+
+
+def sync_to_google_sheets():
+    """
+    Full data sync with Google Sheets including all relationships
+    """
+    try:
+        service = build_service()
+        spreadsheet_id = SPREADSHEET_ID
+
+        # Prepare venue data with image URLs
+        venues_data = []
+        for venue in VenuePage.objects.all():
+            image_url = venue.image.file.url if venue.image else None
+            venues_data.append([
+                venue.name,
+                venue.address,
+                venue.capacity,
+                venue.admission_mode,
+                image_url
+            ])
+
+        # Prepare concert data with proper date/time formatting
+        concerts_data = []
+        for concert in ConcertPage.objects.all():
+            image_url = concert.image.file.url if concert.image else None
+            concerts_data.append([
+                concert.title,
+                concert.date.isoformat() if concert.date else '',  # Convert date to string
+                concert.artist,
+                concert.venue.name,
+                concert.start_time.isoformat() if concert.start_time else '',  # Convert time to string
+                concert.end_time.isoformat() if concert.end_time else '',  # Convert time to string
+                concert.description or '',
+                concert.genre or '',
+                image_url
+            ])
+
+        # Prepare seat zones data with calculated totals
+        seat_zones_data = []
+        for zone in SeatZone.objects.select_related('venue').all():
+            if zone.row_start and zone.row_end:
+                rows = ord(zone.row_end.upper()) - ord(zone.row_start.upper()) + 1
+                seats_per_row = zone.seat_end - zone.seat_start + 1
+                total = rows * seats_per_row
+            else:
+                total = zone.capacity or 0
+                
+            seat_zones_data.append([
+                zone.venue.name,
+                zone.name,
+                zone.row_start,
+                zone.row_end,
+                zone.seat_start,
+                zone.seat_end,
+                total,
+                'Assigned' if zone.row_start else 'General'
+            ])
+
+        # Prepare ticket types data with explicit conversions
+        ticket_types_data = []
+        for tt in TicketType.objects.select_related('seat_zone').all():
+            ticket_types_data.append([
+                tt.concert.title,
+                tt.type,
+                float(tt.price),  # Convert Decimal to float
+                tt.seat_zone.name if tt.seat_zone else '',
+                tt.seat_zone.total_seats if tt.type == 'assigned' else tt.ga_capacity,
+                tt.ga_capacity or 0,
+                tt.sold,
+                tt.remaining,
+                tt.is_sold_out
+            ])
+
+        # Define sheets structure with properly formatted data
+        sheets_config = {
+            "Venues": {
+                "headers": ["Name", "Address", "Capacity", "Admission Mode", "Image URL"],
+                "data": venues_data
+            },
+            "SeatZones": {
+                "headers": ["Venue Name", "Zone Name", "Row Start", "Row End", 
+                          "Seat Start", "Seat End", "Total Seats", "Zone Type"],
+                "data": seat_zones_data
+            },
+            "Concerts": {
+                "headers": ["Name", "Date", "Artist", "Venue Name", 
+                          "Start Time", "End Time", "Description", "Genre", "Image URL"],
+                "data": concerts_data
+            },
+            "TicketTypes": {
+                "headers": ["Concert Name", "Type", "Price", "Seat Zone", 
+                          "Available", "Capacity", "Sold", "Remaining", "Is Sold Out"],
+                "data": ticket_types_data
+            }
+        }
+
+        # Process each sheet
+        for sheet_name, config in sheets_config.items():
+            clear_range = f"{sheet_name}!A2:Z"
+            service.spreadsheets().values().clear(
+                spreadsheetId=spreadsheet_id,
+                range=clear_range,
+                body={}
+            ).execute()
+
+            if config['data']:
+                body = {"values": config['data']}
+                service.spreadsheets().values().append(
+                    spreadsheetId=spreadsheet_id,
+                    range=f"{sheet_name}!A2",
+                    valueInputOption="USER_ENTERED",
+                    body=body
+                ).execute()
+
+        return True
+    except Exception as e:
+        print(f"Sync failed: {str(e)}")
+        return False
 
 # Helper functions
 def add_hateoas_links(obj, links):
@@ -113,7 +235,6 @@ def _validate_zone_type(zone_data, index):
 # Venue Endpoints
 @csrf_exempt
 def venue_list_create(request):
-    print("hi")
     if request.method == 'GET':
         venues = VenuePage.objects.live().values('slug', 'name', 'address', 'capacity', 'admission_mode')
         return JsonResponse(list(venues), safe=False)
@@ -132,11 +253,9 @@ def venue_list_create(request):
                 admission_mode=admission_mode,
                 capacity=data['capacity'],
             )
-            print("Hi")
             parent.add_child(instance=venue)
             venue.save_revision().publish()
 
-            print("Bye")
             # Now create seat zones
             seat_zones = []
             for idx, zone_data in enumerate(data.get('seat_zones', [])):
@@ -156,7 +275,7 @@ def venue_list_create(request):
             
             # Bulk create after venue exists in DB
             SeatZone.objects.bulk_create(seat_zones)
-
+            sync_to_google_sheets()
             return JsonResponse(add_hateoas_links(
                 {
                     'slug': venue.slug,
@@ -218,6 +337,7 @@ def venue_detail(request, venue_slug):
                     )
             
             venue.save_revision().publish()
+            sync_to_google_sheets()
             return JsonResponse({'message': 'Venue updated successfully'})
         
         except Exception as e:
@@ -226,6 +346,7 @@ def venue_detail(request, venue_slug):
     elif request.method == 'DELETE':
         try:
             venue.delete()
+            sync_to_google_sheets()
             return JsonResponse({'message': f'Venue {venue.title} deleted'})
         except ProtectedError:
             return JsonResponse({
@@ -292,7 +413,7 @@ def concert_list_create(request, venue_slug):
             venue.add_child(instance=concert)
             TicketType.objects.bulk_create(ticket_types)
             concert.save_revision().publish()
-
+            sync_to_google_sheets()
             return JsonResponse(add_hateoas_links(
                 {
                     'slug': concert.slug,
@@ -309,6 +430,87 @@ def concert_list_create(request, venue_slug):
             return JsonResponse({'error': str(e)}, status=400)
     
     return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+@csrf_exempt
+def concert_list(request):
+    """List all concerts across all venues"""
+    try:
+        concerts = []
+        for concert in ConcertPage.objects.select_related('venue').all():
+            concerts.append({
+                'id': concert.id,
+                'title': concert.title,
+                'slug': concert.slug,
+                'date': concert.date.isoformat() if concert.date else '',
+                'artist': concert.artist,
+                'venue': concert.venue.name,
+                'start_time': concert.start_time.isoformat() if concert.start_time else '',
+                'end_time': concert.end_time.isoformat() if concert.end_time else '',
+                'sold_out': concert.sold_out,
+                'description': concert.description or '',
+                'genre': concert.genre or '',
+                'image_url': concert.image.file.url if concert.image else None,
+                '_links': {
+                    'self': f'/api/venues/{concert.venue.slug}/concerts/{concert.slug}/',
+                    'tickets': f'/api/venues/{concert.venue.slug}/concerts/{concert.slug}/availability/'
+                }
+            })
+        return JsonResponse(concerts, safe=False)
+    
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+# views.py
+@csrf_exempt
+def concert_detail_by_slug(request, concert_slug):
+    """Get concert details by slug without requiring venue slug"""
+    print(concert_slug)
+    try:
+        concert = get_object_or_404(ConcertPage, slug=concert_slug)
+
+        ticket_types = []
+        for tt in concert.ticket_types.all():
+            ticket_data = {
+                'type': tt.type,
+                'price': float(tt.price),  # Convert Decimal to float
+                'remaining': tt.remaining,
+                'is_sold_out': tt.is_sold_out
+            }
+            
+            if tt.type == 'assigned':
+                ticket_data['seat_zone'] = {
+                    'name': tt.seat_zone.name,
+                    'total_seats': tt.seat_zone.total_seats
+                } if tt.seat_zone else None
+            else:
+                ticket_data['ga_capacity'] = tt.ga_capacity
+                
+            ticket_types.append(ticket_data)
+        print(ticket_types)
+        data = {
+            'id': concert.id,
+            'title': concert.title,
+            'slug': concert.slug,
+            'date': concert.date.isoformat() if concert.date else '',
+            'artist': concert.artist,
+            'venue': concert.venue.name,
+            'venue_slug': concert.venue.slug,  # Include venue slug for compatibility
+            'start_time': concert.start_time.isoformat() if concert.start_time else '',
+            'end_time': concert.end_time.isoformat() if concert.end_time else '',
+            'sold_out': concert.sold_out,
+            'description': concert.description or '',
+            'genre': concert.genre or '',
+            'image_url': concert.image.file.url if concert.image else None,
+            'ticket_types': ticket_types,
+            '_links': {
+                'venue': f'/api/venues/{concert.venue.slug}/',
+                'self': f'/api/concerts/{concert.slug}/'
+            }
+        }
+        return JsonResponse(data)
+    
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 @csrf_exempt
 def concert_detail(request, venue_slug, concert_slug):
@@ -355,18 +557,58 @@ def concert_detail(request, venue_slug, concert_slug):
     elif request.method in ['PUT', 'PATCH']:
         try:
             data = json.loads(request.body)
+            
+            # Update core concert data
             concert.title = data.get('name', concert.title)
             concert.date = data.get('date', concert.date)
             concert.artist = data.get('artist', concert.artist)
             concert.start_time = data.get('start_time', concert.start_time)
             concert.end_time = data.get('end_time', concert.end_time)
             concert.description = data.get('description', concert.description)
-            
-            if 'venue_slug' in data and concert.venue.slug != data['venue_slug']:
-                new_venue = get_object_or_404(VenuePage, slug=data['venue_slug'])
+            concert.genre = data.get('genre', concert.genre)
+
+            # Handle venue change
+            if 'venue' in data and concert.venue.slug != data['venue']:
+                new_venue = get_object_or_404(VenuePage, slug=data['venue'])
                 concert.move(new_venue, pos='last-child')
-            
+
+            # Process ticket types
+            if 'ticket_types' in data:
+                existing_tickets = {tt.slug: tt for tt in concert.ticket_types.all()}
+                seen_slugs = set()
+
+                for tt_data in data['ticket_types']:
+                    # Generate slug if missing
+                    slug = tt_data.get('slug') or slugify(f"{concert.slug}-{tt_data['type']}-{len(seen_slugs)}")
+                    seen_slugs.add(slug)
+                    
+                    # Validate seat zone for assigned tickets
+                    seat_zone = None
+                    if tt_data['type'] == 'assigned':
+                        seat_zone = get_object_or_404(
+                            SeatZone, 
+                            slug=tt_data['seat_zone_slug'], 
+                            venue=concert.venue
+                        )
+
+                    # Create or update ticket type
+                    tt, created = TicketType.objects.update_or_create(
+                        concert=concert,
+                        slug=slug,
+                        defaults={
+                            'type': tt_data['type'],
+                            'price': tt_data['price'],
+                            'seat_zone': seat_zone if tt_data['type'] == 'assigned' else None,
+                            'ga_capacity': tt_data.get('ga_capacity')
+                        }
+                    )
+
+                # Delete removed ticket types
+                for slug in existing_tickets.keys() - seen_slugs:
+                    TicketType.objects.filter(concert=concert, slug=slug).delete()
+            print("Updated payload:", data)
             concert.save_revision().publish()
+            sync_to_google_sheets()
             return JsonResponse({'message': 'Concert updated successfully'})
         
         except Exception as e:
@@ -375,6 +617,7 @@ def concert_detail(request, venue_slug, concert_slug):
     elif request.method == 'DELETE':
         try:
             concert.delete()
+            sync_to_google_sheets()
             return JsonResponse({'message': f'Concert {concert.title} deleted'})
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=400)
@@ -416,7 +659,7 @@ def reserve_seats(request, venue_slug, concert_slug):
             SoldSeat.objects.bulk_create([
                 SoldSeat(concert=concert, seat=seat) for seat in seats
             ])
-            
+            sync_to_google_sheets()
             return JsonResponse({
                 'reserved_seats': data['seat_ids'],
                 'remaining': ticket_type.remaining,
@@ -467,6 +710,7 @@ def ticket_type_detail(request, ticket_type_slug):
                 tt.ga_capacity = data['ga_capacity']
             
             tt.save()
+            sync_to_google_sheets()            
             return JsonResponse({
                 'remaining': tt.remaining,
                 'is_sold_out': tt.is_sold_out
@@ -509,7 +753,7 @@ def zone_list(request, venue_slug):
                 **validated
             )
             zone.save()
-            
+            sync_to_google_sheets()            
             return JsonResponse(add_hateoas_links(
                 {
                     'slug': zone.slug,

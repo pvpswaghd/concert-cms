@@ -9,7 +9,6 @@ from wagtail.api import APIField
 from rest_framework.serializers import ModelSerializer
 from rest_framework.fields import IntegerField
 
-# 1. First define VenuePage without seat_zones API field
 class VenuePage(Page):
     ADMISSION_TYPES = (
         ('assigned', 'Assigned Seating Only'),

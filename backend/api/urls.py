@@ -3,6 +3,8 @@ from . import views
 
 urlpatterns = [
     # Venue endpoints
+    path("concerts/", views.concert_list, name="concert_list"),
+    path("concerts/<slug:concert_slug>/", views.concert_detail_by_slug, name="concert_detail_by_slug"),
     path("venues/", views.venue_list_create, name="venue_list_create"),
     path("venues/<slug:venue_slug>/", views.venue_detail, name="venue_detail"),
     path("venues/<slug:venue_slug>/zones/", views.zone_list, name="zone_list"),
