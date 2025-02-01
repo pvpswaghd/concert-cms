@@ -65,12 +65,15 @@ class SeatZone(Orderable):
     capacity = models.IntegerField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
-        self.row_start = self.row_start.upper()
-        self.row_end = self.row_end.upper()
-        if not self.slug:
-            self.slug = slugify(self.name)
-        super().save(*args, **kwargs)
-        self.generate_seats()
+        if self.row_start and self.row_end and self.seat_start and self.seat_end:
+            self.row_start = self.row_start.upper()
+            self.row_end = self.row_end.upper()
+            if not self.slug:
+                self.slug = slugify(self.name)
+            super().save(*args, **kwargs)
+            self.generate_seats()
+        else:
+            super().save(*args, **kwargs)
 
     def generate_seats(self):
         # Only generate seats if this is an assigned zone
@@ -85,11 +88,15 @@ class SeatZone(Orderable):
                         number=seat_num,
                         identifier=f"{row}{seat_num}"
                     )
-
+    @property
+    def type(self):
+        if self.capacity and not (self.row_start and self.row_end and self.seat_start and self.seat_end):
+            return 'general'
+        return 'assigned'
     @property
     def total_seats(self):
-        print(self.name)
-        if self.capacity:
+        print(self.capacity, self.name, self.row_start, self.row_end, self.seat_start, self.seat_end)
+        if not (self.row_start and self.row_end and self.seat_start and self.seat_end):
             return self.capacity
         rows = ord(self.row_end) - ord(self.row_start) + 1
         seats_per_row = self.seat_end - self.seat_start + 1

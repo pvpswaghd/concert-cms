@@ -8,7 +8,6 @@ from .models import VenuePage, ConcertPage, TicketType, SoldSeat, SeatZone, Seat
 from django.db.models.deletion import ProtectedError
 from django.utils.text import slugify
 from .config import build_service, SPREADSHEET_ID
-from django.db.models import Case, When, Value, F, CharField, IntegerField
 import json
 
 
@@ -107,7 +106,6 @@ def sync_to_google_sheets():
             }
         }
 
-        # Process each sheet
         for sheet_name, config in sheets_config.items():
             clear_range = f"{sheet_name}!A2:Z"
             service.spreadsheets().values().clear(
@@ -143,7 +141,7 @@ def validate_seat_zone(zone_data, index, admission_mode):
             'row_end': None,
             'seat_start': None,
             'seat_end': None,
-            'ga_capacity': None
+            'capacity': None
         }
 
         if admission_mode == 'mixed':
@@ -164,7 +162,7 @@ def validate_seat_zone(zone_data, index, admission_mode):
             elif zone_type == 'general':
                 # Validate general admission
                 ga_validation = _validate_ga_fields(zone_data, index)
-                validated_data['ga_capacity'] = ga_validation['capacity']
+                validated_data['capacity'] = ga_validation['capacity']
             else:
                 raise ValidationError(f"Invalid zone type '{zone_type}' in zone {index+1}")
 
@@ -182,10 +180,9 @@ def validate_seat_zone(zone_data, index, admission_mode):
         elif admission_mode == 'general':
             # Validate general admission
             ga_validation = _validate_ga_fields(zone_data, index)
-            validated_data['ga_capacity'] = ga_validation['capacity']
+            validated_data['capacity'] = int(ga_validation['capacity'])
         else:
             raise ValidationError(f"Invalid admission mode: {admission_mode}")
-        print(validated_data)
         return validated_data
 
     except KeyError as e:
@@ -243,7 +240,6 @@ def venue_list_create(request):
             data = json.loads(request.body)
             parent = Page.objects.get(slug='home')
             admission_mode = data.get('admission_mode', 'assigned')
-            print(data)
             # Set BOTH title (Page) and name (VenuePage) from data['name']
             venue = VenuePage(
                 title=data['name'],    # Wagtail's Page.title
@@ -290,7 +286,6 @@ def venue_list_create(request):
             ), status=201)
             
         except Exception as e:
-            print("oops")
             return JsonResponse({'error': str(e)}, status=400)
     
     return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -309,9 +304,17 @@ def venue_detail(request, venue_slug):
             'capacity': venue.capacity,
             'admission_mode': venue.admission_mode,
             'zones': [{
+                'id': z.id,
                 'slug': z.slug,
                 'name': z.name,
-                'total_seats': z.total_seats
+                'total_seats': z.total_seats,
+                'row_start': z.row_start,
+                'row_end': z.row_end,
+                'seat_start': z.seat_start,
+                'seat_end': z.seat_end,
+                'total_seats': z.total_seats,
+                'ga_capacity': z.capacity,
+                'type': z.type,
             } for z in venue.seat_zones.all()]
         }
         return JsonResponse(add_hateoas_links(data, {
@@ -320,27 +323,44 @@ def venue_detail(request, venue_slug):
         }))
     
     elif request.method in ['PUT', 'PATCH']:
+        from django.db import transaction
         try:
-            data = json.loads(request.body)
-            venue.title = data.get('name', venue.title)
-            venue.address = data.get('address', venue.address)
-            venue.capacity = data.get('capacity', venue.capacity)
-            venue.admission_mode = data.get('admission_mode', venue.admission_mode)
-            
-            if 'seat_zones' in data:
-                venue.seat_zones.all().delete()
-                for zone_data in data['seat_zones']:
-                    validated = validate_seat_zone(zone_data, 0)
-                    venue.seat_zones.create(
-                        slug=zone_data.get('slug') or slugify(zone_data['name']),
-                        **validated
-                    )
-            
-            venue.save_revision().publish()
-            sync_to_google_sheets()
-            return JsonResponse({'message': 'Venue updated successfully'})
-        
+            with transaction.atomic():
+                data = json.loads(request.body)
+                venue.title = data.get('name', venue.title)
+                venue.address = data.get('address', venue.address)
+                venue.capacity = data.get('capacity', venue.capacity)
+                venue.admission_mode = data.get('admission_mode', venue.admission_mode)
+
+                if 'seat_zones' in data:
+                    seen_slugs = set()
+                    
+                    # Process seat zones
+                    for zone_data in data['seat_zones']:
+                        validated = validate_seat_zone(zone_data, 0, zone_data.get("type"))
+                        slug = zone_data.get('slug') or slugify(zone_data['name'])
+                        seen_slugs.add(slug)
+                        
+                        # Wagtail-friendly update_or_create
+                        zone, created = SeatZone.objects.update_or_create(
+                            venue=venue,
+                            slug=slug,
+                            defaults={**validated}
+                        )
+                    # Delete unused zones (not referenced by TicketType)
+                    for zone in venue.seat_zones.exclude(slug__in=seen_slugs):
+                        if not TicketType.objects.filter(seat_zone=zone).exists():
+                            zone.delete()
+
+                # Wagtail revision system
+                revision = venue.save_revision()
+                revision.publish()
+                sync_to_google_sheets()
+                
+                return JsonResponse({'message': 'Venue updated successfully'})
+
         except Exception as e:
+            print(e)
             return JsonResponse({'error': str(e)}, status=400)
     
     elif request.method == 'DELETE':
@@ -385,29 +405,25 @@ def concert_list_create(request, venue_slug):
             # Create ticket types
             ticket_types = []
             for tt_data in data.get('ticket_types', []):
-                tt_type = tt_data['type']
-                if tt_type == 'assigned':
-                    zone = get_object_or_404(SeatZone, 
-                        slug=tt_data['seat_zone_slug'],
-                        venue=venue
-                    )
-                    ticket_types.append(TicketType(
-                        concert=concert,
-                        type=tt_type,
-                        seat_zone=zone,
-                        price=tt_data['price'],
-                        slug=tt_data.get('slug') or slugify(f"{concert.slug}-{zone.slug}")
-                    ))
-                elif tt_type == 'general':
-                    ticket_types.append(TicketType(
-                        concert=concert,
-                        type=tt_type,
-                        ga_capacity=tt_data['ga_capacity'],
-                        price=tt_data['price'],
-                        slug=tt_data.get('slug') or slugify(f"{concert.slug}-general")
-                    ))
-                else:
-                    raise ValidationError(f"Invalid ticket type: {tt_type}")
+                # Get zone from submitted data
+                print(tt_data)
+                zone = get_object_or_404(SeatZone, 
+                    slug=tt_data['seat_zone_slug'],
+                    venue=venue
+                )
+                
+                # Determine ticket type from zone type
+                ticket_type = 'assigned' if zone.type == 'assigned' else 'general'
+                
+                ticket_types.append(TicketType(
+                    concert=concert,
+                    type=ticket_type,
+                    seat_zone=zone,
+                    price=tt_data['price'],
+                    # For general admission, use zone's capacity
+                    ga_capacity=zone.capacity if zone.type == 'general' else None,
+                    slug=tt_data.get('slug') or slugify(f"{concert.slug}-{zone.slug}")
+                ))
             
             # Save everything
             venue.add_child(instance=concert)
@@ -483,6 +499,9 @@ def concert_detail_by_slug(request, concert_slug):
                     'total_seats': tt.seat_zone.total_seats
                 } if tt.seat_zone else None
             else:
+                ticket_data['seat_zone'] = {
+                    'name': tt.seat_zone.name,
+                }
                 ticket_data['ga_capacity'] = tt.ga_capacity
                 
             ticket_types.append(ticket_data)
@@ -531,6 +550,7 @@ def concert_detail(request, venue_slug, concert_slug):
                 if tt.type == 'assigned':
                     ticket_type_data['seat_zone'] = tt.seat_zone.slug if tt.seat_zone else None
                 else:
+                    ticket_type_data['seat_zone'] = tt.seat_zone.slug if tt.seat_zone else None
                     ticket_type_data['ga_capacity'] = tt.ga_capacity
                 ticket_types.append(ticket_type_data)
 
@@ -575,21 +595,21 @@ def concert_detail(request, venue_slug, concert_slug):
             # Process ticket types
             if 'ticket_types' in data:
                 existing_tickets = {tt.slug: tt for tt in concert.ticket_types.all()}
+                print("existing_tickets:", existing_tickets)
                 seen_slugs = set()
 
                 for tt_data in data['ticket_types']:
                     # Generate slug if missing
+                    print(tt_data)
                     slug = tt_data.get('slug') or slugify(f"{concert.slug}-{tt_data['type']}-{len(seen_slugs)}")
                     seen_slugs.add(slug)
                     
                     # Validate seat zone for assigned tickets
-                    seat_zone = None
-                    if tt_data['type'] == 'assigned':
-                        seat_zone = get_object_or_404(
-                            SeatZone, 
-                            slug=tt_data['seat_zone_slug'], 
-                            venue=concert.venue
-                        )
+                    seat_zone = get_object_or_404(
+                        SeatZone, 
+                        slug=tt_data['seat_zone_slug'], 
+                        venue=concert.venue
+                    )
 
                     # Create or update ticket type
                     tt, created = TicketType.objects.update_or_create(
@@ -598,7 +618,7 @@ def concert_detail(request, venue_slug, concert_slug):
                         defaults={
                             'type': tt_data['type'],
                             'price': tt_data['price'],
-                            'seat_zone': seat_zone if tt_data['type'] == 'assigned' else None,
+                            'seat_zone': seat_zone,
                             'ga_capacity': tt_data.get('ga_capacity')
                         }
                     )
@@ -735,6 +755,7 @@ def zone_list(request, venue_slug):
                 'seat_start': zone.seat_start,
                 'seat_end': zone.seat_end,
                 'total_seats': zone.total_seats,
+                'type': zone.type,
                 '_links': {
                     'self': f'/api/venues/{venue.slug}/zones/{zone.slug}/',
                     'seats': f'/api/venues/{venue.slug}/zones/{zone.slug}/seats/'

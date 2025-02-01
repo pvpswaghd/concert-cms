@@ -239,7 +239,40 @@ function renderConcerts(concerts) {
     `).join('');
 }
 
-function showConcertForm() {
+async function loadZonesForCurrentVenue(venueSlug) {
+    if (!venueSlug) {
+        showStatus('Please select a venue first', true);
+        return [];
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/venues/${venueSlug}/zones/`);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const zones = await response.json();
+        window.currentVenueZones = zones; // Store globally
+        return zones;
+    } catch (error) {
+        console.error('Zone loading failed:', error);
+        showStatus(`Failed to load zones: ${error.message}`, true);
+        return [];
+    }
+}
+
+async function showConcertForm() {
+    const venueSlug = document.getElementById('venue-select').value;
+    if (!venueSlug) {
+        showStatus('Please select a venue first', true);
+        return;
+    }
+
+    // Ensure zones are loaded before creating form
+    const zones = await loadZonesForCurrentVenue(venueSlug);
+    
+    if (zones.length === 0) {
+        showStatus('This venue has no zones - create zones first', true);
+        return;
+    }
+
     document.getElementById('concert-form').style.display = 'block';
     document.getElementById('concert-form-title').textContent = 'Add New Concert';
     document.getElementById('concertForm').reset();
@@ -248,10 +281,9 @@ function showConcertForm() {
     const ticketTypeFields = document.getElementById('ticket-type-fields');
     ticketTypeFields.innerHTML = '';
     addTicketTypeField();
-    
-    const venueSlug = document.getElementById('venue-select').value;
-    loadZonesForCurrentVenue(venueSlug);
 }
+
+
 
 function hideConcertForm() {
     document.getElementById('concert-form').style.display = 'none';
@@ -261,7 +293,6 @@ async function handleConcertSubmit(event) {
     event.preventDefault();
     const venueSlug = document.getElementById('venue-select').value;
     
-    // Full form data collection with all fields
     const formData = {
         name: document.getElementById('concert-name').value,
         date: document.getElementById('concert-date').value,
@@ -273,22 +304,29 @@ async function handleConcertSubmit(event) {
         ticket_types: []
     };
 
-    // Complete ticket type data collection
     document.querySelectorAll('.ticket-type-form').forEach(form => {
-        const type = form.querySelector('select[name="ticket-type"]').value;
-        const price = parseFloat(form.querySelector('input[name="ticket-price"]').value);
-        
+        const zoneSlug = form.querySelector('[name="seat-zone"]').value;
+        const zone = window.currentVenueZones.find(z => z.slug === zoneSlug);
+        if (!zone) {
+            showStatus('Selected zone not found', true);
+            return;
+        }
+
         const ticketData = {
-            type: type,
-            price: price.toFixed(2)
+            type: zone.type,
+            price: parseFloat(form.querySelector('[name="ticket-price"]').value).toFixed(2)
         };
 
-        if (type === 'assigned') {
-            const seatZone = form.querySelector('select[name="seat-zone"]').value;
-            ticketData.seat_zone_slug = seatZone;
+        if (zone.type === 'assigned') {
+            ticketData.seat_zone_slug = zoneSlug;
         } else {
-            const capacity = parseInt(form.querySelector('input[name="ga-capacity"]').value);
-            ticketData.ga_capacity = capacity;
+            ticketData.seat_zone_slug = zoneSlug;
+            const gaCap = form.querySelector('[name="ga-capacity"]').value;
+            if (!gaCap) {
+                showStatus('GA Capacity is required for general admission zones', true);
+                return;
+            }
+            ticketData.ga_capacity = parseInt(gaCap);
         }
 
         formData.ticket_types.push(ticketData);
@@ -298,7 +336,7 @@ async function handleConcertSubmit(event) {
         const url = currentEditingConcert 
             ? `${API_BASE}/venues/${venueSlug}/concerts/${currentEditingConcert}/`
             : `${API_BASE}/venues/${venueSlug}/concerts/`;
-            
+        
         const response = await fetch(url, {
             method: currentEditingConcert ? 'PUT' : 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -306,15 +344,12 @@ async function handleConcertSubmit(event) {
         });
 
         if (!response.ok) throw new Error(await response.text());
-        
         showStatus(`Concert ${currentEditingConcert ? 'updated' : 'created'} successfully!`);
         hideConcertForm();
         loadConcerts(venueSlug);
     } catch (error) {
         showStatus(error.message, true);
     }
-
-    currentEditingConcert = null;
 }
 
 async function editConcert(slug) {
@@ -343,7 +378,7 @@ async function editConcert(slug) {
             addTicketTypeField({
                 type: ticketType.type,
                 price: ticketType.price,
-                seat_zone: ticketType.seat_zone?.slug,
+                seat_zone: ticketType.seat_zone,
                 ga_capacity: ticketType.ga_capacity
             });
         });
@@ -373,21 +408,12 @@ async function deleteConcert(slug) {
 }
 
 // ========== Zone Management ========== //
-async function loadZonesForCurrentVenue(venueSlug) {
-    if (!venueSlug) {
-        showStatus('Please select a venue first', true);
-        return;
-    }
-    
-    try {
-        const response = await fetch(`${API_BASE}/venues/${venueSlug}/zones/`);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const zones = await response.json();
-        window.currentVenueZones = zones;
-    } catch (error) {
-        console.error('Zone loading failed:', error);
-        showStatus(`Failed to load zones: ${error.message}`, true);
-    }
+
+function updateTicketTypeFields(select) {
+    const selectedOption = select.options[select.selectedIndex];
+    const zoneType = selectedOption.getAttribute('data-type');
+    const generalFields = select.closest('.ticket-type-form').querySelector('.general-ticket-fields');
+    generalFields.style.display = zoneType === 'general' ? 'block' : 'none';
 }
 
 function addTicketTypeField(data = {}) {
@@ -395,38 +421,43 @@ function addTicketTypeField(data = {}) {
     const newField = document.createElement('div');
     newField.className = 'ticket-type-form';
     
+    // Generate zone options with type information
     const zoneOptions = window.currentVenueZones?.map(zone => 
-        `<option value="${zone.slug}" ${data.seat_zone === zone.slug ? 'selected' : ''}>
-            ${zone.name} (${zone.total_seats} seats)
+        `<option value="${zone.slug}" data-type="${zone.type}" ${data.seat_zone === zone.slug ? 'selected' : ''}>
+            ${zone.name} (${zone.type === 'assigned' ? 'Seated' : 'GA'})
         </option>`
-    ).join('') || '';
+    ).join('') || '<option disabled>No zones available - create zones first</option>';
 
     newField.innerHTML = `
         <div class="form-group">
-            <label>Ticket Type:</label>
-            <select name="ticket-type" required onchange="toggleTicketTypeFields(this)">
-                <option value="assigned" ${data.type === 'assigned' ? 'selected' : ''}>Assigned Seating</option>
-                <option value="general" ${data.type === 'general' ? 'selected' : ''}>General Admission</option>
+            <label>Seat Zone:</label>
+            <select name="seat-zone" required onchange="updateTicketTypeFields(this)">
+                ${zoneOptions}
             </select>
         </div>
         <div class="form-group">
-            <label>Price:</label>
-            <input type="number" step="0.01" name="ticket-price" value="${data.price || ''}" required>
+            <label>Price ($):</label>
+            <input type="number" step="0.01" name="ticket-price" 
+                   value="${data.price || ''}" required>
         </div>
-        <div class="assigned-ticket-fields" style="display: ${data.type === 'assigned' ? 'block' : 'none'}">
+        <div class="general-ticket-fields" style="display: none;">
             <div class="form-group">
-                <label>Seat Zone:</label>
-                <select name="seat-zone">${zoneOptions}</select>
+                <label>GA Capacity:</label>
+                <input type="number" name="ga-capacity" 
+                       value="${data.ga_capacity || ''}" ${data.type === 'general' ? 'required' : ''}>
             </div>
         </div>
-        <div class="general-ticket-fields" style="display: ${data.type === 'general' ? 'block' : 'none'}">
-            <div class="form-group">
-                <label>Capacity:</label>
-                <input type="number" name="ga-capacity" value="${data.ga_capacity || ''}">
-            </div>
-        </div>
-        <button type="button" onclick="this.parentElement.remove()">Remove Ticket Type</button>
+        <button type="button" class="remove-btn" 
+                onclick="this.parentElement.remove()">Remove</button>
     `;
+
+    // Initialize field visibility for existing data
+    if (data.seat_zone) {
+        const selectedZone = window.currentVenueZones.find(z => z.slug === data.seat_zone);
+        if (selectedZone?.type === 'general') {
+            newField.querySelector('.general-ticket-fields').style.display = 'block';
+        }
+    }
 
     container.appendChild(newField);
 }
@@ -453,3 +484,16 @@ async function initialize() {
 }
 
 window.addEventListener('load', initialize);
+document.getElementById('venue-select').addEventListener('change', async function() {
+    const venueSlug = this.value;
+    await loadZonesForCurrentVenue(venueSlug);
+    
+    // Refresh ticket types when venue changes
+    const ticketTypeFields = document.getElementById('ticket-type-fields');
+    if (ticketTypeFields) {
+        ticketTypeFields.innerHTML = '';
+        if (window.currentVenueZones?.length > 0) {
+            addTicketTypeField();
+        }
+    }
+});
