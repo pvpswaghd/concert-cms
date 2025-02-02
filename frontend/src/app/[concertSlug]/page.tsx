@@ -240,3 +240,5 @@ export default async function ConcertDetailPage({
         </div>
     );
 }
+
+export const revalidate = 0;

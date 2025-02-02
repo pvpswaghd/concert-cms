@@ -132,6 +132,7 @@ async function handleVenueSubmit(event) {
             zoneData.seat_end = zone.querySelector('[name="seat-end"]').value;
         } else {
             zoneData.ga_capacity = zone.querySelector('[name="ga-capacity"]').value;
+            zoneData.ga_capacity = parseInt(zoneData.ga_capacity);
         }
 
         formData.seat_zones.push(zoneData);
@@ -147,7 +148,7 @@ async function handleVenueSubmit(event) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(formData)
         });
-
+        console.log(formData)
         if (!response.ok) throw new Error(await response.text());
         showStatus(`Venue ${currentEditingVenue ? 'updated' : 'created'} successfully!`);
         hideVenueForm();

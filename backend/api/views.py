@@ -182,6 +182,7 @@ def validate_seat_zone(zone_data, index, admission_mode):
             "seat_start": None,
             "seat_end": None,
             "capacity": None,
+            "type": zone_data.get("type"),
         }
 
         if admission_mode == "mixed":
@@ -323,6 +324,13 @@ def venue_list_create(request):
             seat_zones = []
             for idx, zone_data in enumerate(data.get("seat_zones", [])):
                 validated = validate_seat_zone(zone_data, idx, admission_mode)
+                def total_seats(validated):
+                    if validated.get("type") == "general":
+                        return validated.get("capacity")
+                    rows = ord(validated.get("row_end")) - ord(validated.get("row_start")) + 1
+                    seats_per_row = validated.get("seat_end") - validated.get("seat_start") + 1
+                    return rows * seats_per_row
+                print("Total seats: ", total_seats(validated))
 
                 zone = SeatZone(
                     venue=venue, 
@@ -332,7 +340,8 @@ def venue_list_create(request):
                     row_end=validated.get("row_end"),
                     seat_start=validated.get("seat_start"),
                     seat_end=validated.get("seat_end"),
-                    capacity=validated.get("ga_capacity"),
+                    type=validated.get("type"),
+                    capacity=validated.get("capacity"),
                 )
                 seat_zones.append(zone)
 

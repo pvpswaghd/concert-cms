@@ -8,6 +8,7 @@ from wagtail.admin.panels import FieldPanel, InlinePanel, PageChooserPanel
 from wagtail.api import APIField
 from rest_framework.serializers import ModelSerializer
 from rest_framework.fields import IntegerField
+from django.utils.functional import cached_property
 
 class VenuePage(Page):
     ADMISSION_TYPES = (
@@ -63,6 +64,7 @@ class SeatZone(Orderable):
     seat_end = models.PositiveIntegerField(help_text="Last seat number (e.g., 10)", null=True)
     slug = models.SlugField(max_length=50, unique=False, null=True)
     capacity = models.IntegerField(null=True, blank=True)
+    type = models.CharField(max_length=10, default='assigned')
 
     def save(self, *args, **kwargs):
         if self.row_start and self.row_end and self.seat_start and self.seat_end:
@@ -88,12 +90,15 @@ class SeatZone(Orderable):
                         number=seat_num,
                         identifier=f"{row}{seat_num}"
                     )
-    @property
-    def type(self):
-        if self.capacity and not (self.row_start and self.row_end and self.seat_start and self.seat_end):
-            return 'general'
-        return 'assigned'
-    @property
+    # @property
+    # def type(self):
+    #     print(self.capacity)
+    #     print(self.row_start, self.row_end, self.seat_start, self.seat_end)
+    #     print(self.capacity and not (self.row_start and self.row_end and self.seat_start and self.seat_end))
+    #     if self.capacity and not (self.row_start and self.row_end and self.seat_start and self.seat_end):
+    #         return 'general'
+    #     return 'assigned'
+    @cached_property
     def total_seats(self):
         print(self.capacity, self.name, self.row_start, self.row_end, self.seat_start, self.seat_end)
         if not (self.row_start and self.row_end and self.seat_start and self.seat_end):
