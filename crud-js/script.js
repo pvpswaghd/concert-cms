@@ -1,6 +1,7 @@
 const API_BASE = 'http://localhost:8000/api';
 
 // ========== General UI Functions ========== //
+
 function showSection(sectionId) {
     document.querySelectorAll('.form-section').forEach(el => 
         el.classList.remove('active'));
