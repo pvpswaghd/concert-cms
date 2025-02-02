@@ -4,6 +4,10 @@ This is a proof-of-concept headless CMS for managing concert tickets using Wagta
 
 ## Demo
 
+https://github.com/user-attachments/assets/e665eb80-2a56-4f6b-93b5-7d756136622b
+
+
+Note that in this video, there is one minor bug when creating the venue and adding ticket types in a new concert. This has been resolved.
 ## Installation
 ```bash
 cd backend/
