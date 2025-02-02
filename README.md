@@ -449,7 +449,6 @@ No payload is needed. If it is successful, then it will prompt a response like t
 
 The documentation for the individual components can be referenced in the following folders:
 
-- [`backend/api/README.md`](https://github.com/pvpswaghd/concert-cms/tree/main/backend/api#api-documentation)
 - [`crud-js/README.md`](https://github.com/pvpswaghd/concert-cms/tree/main/crud-js#crud-operations-page)
 - [`frontend/README.md`](https://github.com/pvpswaghd/concert-cms/tree/main/backend/api#api-documentation)
 
