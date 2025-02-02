@@ -3,68 +3,118 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Concert CRUD Operations</title>
+    <title>Concert CMS Admin</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <h1>Concert Management</h1>
+    <div class="container">
+        <div class="sidebar">
+            <button class="nav-button" onclick="showSection('manage-venues')">Manage Venues</button>
+            <button class="nav-button" onclick="showSection('manage-concerts')">Manage Concerts</button>
+        </div>
 
-    <!-- Update Concert Form (Hidden by Default) -->
-    <div class="form-container" id="update-concert-form" style="display: none;">
-        <h2>Update Concert</h2>
-        <form id="update-form">
-            <input type="hidden" id="update-id">
-            <input type="text" id="update-title" placeholder="Title" required>
-            <input type="text" id="update-name" placeholder="Name" required>
-            <input type="date" id="update-date" required>
-            <input type="text" id="update-location" placeholder="Location" required>
-            <input type="number" id="update-price" placeholder="Price" step="0.01" required>
-            <textarea id="update-description" placeholder="Description"></textarea>
-            <input type="time" id="update-start-time" required>
-            <input type="time" id="update-end-time" required>
-            <input type="text" id="update-concert-type" placeholder="Concert Type" required>
-            <input type="text" id="update-artist" placeholder="Artist" required>
-            <div class="sold-out-container">
-                <label for="sold-out" class="sold-out-label">
-                    <input type="checkbox" id="update-sold-out">
-                    <span>Mark as Sold Out</span>
-                </label>
+        <div class="main-content">
+            <!-- Venue Management -->
+            <div id="manage-venues" class="form-section active">
+                <h2>Venues</h2>
+                <button onclick="showVenueForm()">Add New Venue</button>
+                <div id="venue-list" class="dynamic-list"></div>
+                
+                <div id="venue-form" style="display: none;">
+                    <h3 id="form-title">Create/Edit Venue</h3>
+                    <form id="venueForm" onsubmit="handleVenueSubmit(event)">
+                        <input type="hidden" id="venue-slug">
+                        <div class="form-group">
+                            <label>Name:</label>
+                            <input type="text" id="venue-name" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Address:</label>
+                            <textarea id="venue-address" required></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Capacity:</label>
+                            <input type="number" id="venue-capacity" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Admission Mode:</label>
+                            <select id="venue-admission-mode" required>
+                                <option value="assigned">Assigned Seating</option>
+                                <option value="general">General Admission</option>
+                                <option value="mixed">Mixed Mode</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <h4>Seat Zones</h4>
+                            <button type="button" onclick="addZoneField()">Add Zone</button>
+                            <div id="zone-fields" class="dynamic-list"></div>
+                        </div>
+
+                        <button type="submit">Save Venue</button>
+                        <button type="button" onclick="hideVenueForm()">Cancel</button>
+                    </form>
+                </div>
             </div>
-            <button type="submit">Update Concert</button>
-            <button type="button" onclick="cancelUpdate()">Cancel</button>
-        </form>
-    </div>
 
-    <!-- Create Concert Form -->
-    <div class="form-container">
-        <h2>Create Concert</h2>
-        <form id="create-concert-form">
-            <input type="text" id="title" placeholder="Title" required>
-            <input type="text" id="name" placeholder="Name" required>
-            <input type="date" id="date" required>
-            <input type="text" id="location" placeholder="Location" required>
-            <input type="number" id="price" placeholder="Price" step="0.01" required>
-            <textarea id="description" placeholder="Description"></textarea>
-            <input type="time" id="start-time" required>
-            <input type="time" id="end-time" required>
-            <input type="text" id="concert-type" placeholder="Concert Type" required>
-            <input type="text" id="artist" placeholder="Artist" required>
-            <div class="sold-out-container">
-                <label for="sold-out" class="sold-out-label">
-                    <input type="checkbox" id="sold-out">
-                    <span>Mark as Sold Out</span>
-                </label>
+            <!-- Concert Management -->
+            <div id="manage-concerts" class="form-section">
+                <h2>Concerts</h2>
+                <div id="concert-filter">
+                    <select id="venue-select" onchange="loadConcerts(this.value)"></select>
+                    <button onclick="showConcertForm()">Add New Concert</button>
+                </div>
+                <div id="concert-list" class="dynamic-list"></div>
             </div>
-            <button type="submit">Create Concert</button>
-        </form>
-    </div>
 
-    <!-- List Concerts -->
-    <div class="list-container">
-        <h2>Concerts</h2>
-        <ul id="concert-list"></ul>
-    </div>
+            <div id="concert-form" style="display: none;">
+                <h3 id="concert-form-title">Create/Edit Concert</h3>
+                <form id="concertForm" onsubmit="handleConcertSubmit(event)">
+                    <input type="hidden" id="concert-slug">
+                    <div class="form-group">
+                        <label>Concert Name:*</label>
+                        <input type="text" id="concert-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Date:*</label>
+                        <input type="date" id="concert-date" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Artist:*</label>
+                        <input type="text" id="concert-artist" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Start Time:*</label>
+                        <input type="time" id="concert-start-time" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Start Time:*</label>
+                        <input type="time" id="concert-end-time" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Concert Description:*</label>
+                        <input type="text" id="concert-description" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Concert Genre:</label>
+                        <input type="text" id="concert-genre" >
+                    </div>
+                    
+                    <div class="form-group">
+                        <h4>Ticket Types</h4>
+                        <button type="button" onclick="addTicketTypeField()">Add Ticket Type</button>
+                        <div id="ticket-type-fields" class="dynamic-list"></div>
+                    </div>
+            
+                    <button type="submit">Save Concert</button>
+                    <button type="button" onclick="hideConcertForm()">Cancel</button>
+                </form>
+            </div>
 
+            <!-- Status Messages -->
+            <div id="status"></div>
+        </div>
+    </div>
     <script src="script.js"></script>
 </body>
 </html>

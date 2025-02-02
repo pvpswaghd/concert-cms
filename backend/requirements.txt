@@ -2,7 +2,7 @@ anyascii==0.3.2
 asgiref==3.8.1
 beautifulsoup4==4.12.3
 cachetools==5.5.1
-certifi==2024.12.14
+certifi==2025.1.31
 charset-normalizer==3.4.1
 defusedxml==0.7.1
 Django==4.2.18
@@ -35,7 +35,7 @@ protobuf==5.29.3
 pyasn1==0.6.1
 pyasn1_modules==0.4.1
 pyparsing==3.2.1
-pytz==2024.2
+pytz==2025.1
 requests==2.32.3
 requests-oauthlib==2.0.0
 rsa==4.9
