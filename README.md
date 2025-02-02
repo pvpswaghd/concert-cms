@@ -4,7 +4,6 @@ This is a proof-of-concept headless CMS for managing concert tickets using Wagta
 
 ## Demo
 
-
 ## Installation
 ```bash
 cd backend/
